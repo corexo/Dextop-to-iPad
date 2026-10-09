@@ -364,6 +364,17 @@ class NativeBridge {
     await channel.invokeMethod('stopAuto');
   }
 
+  Future<Map<String, dynamic>> startRemoteIpadSession() async =>
+      await channel.invokeMapMethod<String, dynamic>('startRemoteIpadSession') ??
+      {};
+
+  Future<void> stopRemoteIpadSession() =>
+      channel.invokeMethod('stopRemoteIpadSession');
+
+  Future<Map<String, dynamic>> remoteIpadSessionStatus() async =>
+      await channel.invokeMapMethod<String, dynamic>('remoteIpadSessionStatus') ??
+      {};
+
   Future<void> start(
     DisplayProfile profile,
     bool portrait,

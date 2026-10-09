@@ -209,6 +209,7 @@ class MirrorService : AccessibilityService(), SurfaceHolder.Callback {
         private var pendingLaptopDemo = false
         private var pendingLaptopPreviewThemeId: String? = null
         private var active = false
+        data class ActiveDisplaySnapshot(val displayId: Int, val width: Int, val height: Int, val density: Int)
 
         fun launch(
             context: Context,
@@ -328,6 +329,17 @@ class MirrorService : AccessibilityService(), SurfaceHolder.Callback {
         }
 
         fun isActive(): Boolean = active
+
+        fun activeDisplaySnapshot(): ActiveDisplaySnapshot? {
+            val running = instance ?: return null
+            if (!active || running.targetDisplayId < 0) return null
+            return ActiveDisplaySnapshot(
+                displayId = running.targetDisplayId,
+                width = running.targetWidth,
+                height = running.targetHeight,
+                density = running.density,
+            )
+        }
 
         /** True only when the active accessibility session is owned by Car Companion. */
         fun isAutoOnlySessionActive(): Boolean = active && instance?.autoOnlySession == true

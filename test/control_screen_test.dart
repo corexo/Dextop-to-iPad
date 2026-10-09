@@ -159,4 +159,29 @@ void main() {
     expect(arguments['height'], 540);
     expect(arguments['density'], 240);
   });
+
+  test('starts remote iPad session through the native channel', () async {
+    MethodCall? received;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          received = call;
+          return {'running': true, 'videoUrl': 'http://127.0.0.1/live.mp4'};
+        });
+    final bridge = NativeBridge();
+    final result = await bridge.startRemoteIpadSession();
+    expect(received?.method, 'startRemoteIpadSession');
+    expect(result['running'], isTrue);
+  });
+
+  test('queries remote iPad session status through native channel', () async {
+    MethodCall? received;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          received = call;
+          return {'running': false};
+        });
+    final bridge = NativeBridge();
+    await bridge.remoteIpadSessionStatus();
+    expect(received?.method, 'remoteIpadSessionStatus');
+  });
 }

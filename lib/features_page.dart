@@ -48,7 +48,10 @@ class _DextopFeaturesPageState extends State<DextopFeaturesPage> {
   var longPressGesture = 'drag';
   var experimentalMultiTouch = true;
   var performanceHud = false;
+  var remoteIpadStatus = <String, dynamic>{'running': false};
+  var remoteIpadBusy = false;
   Timer? metricsTimer;
+  Timer? remoteIpadTimer;
 
   static final workspaceLayouts = <String, Map<String, Object>>{
     'three_columns': {
@@ -125,12 +128,17 @@ class _DextopFeaturesPageState extends State<DextopFeaturesPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) => load());
     if (widget.category == 'status') {
       metricsTimer = Timer.periodic(Duration(seconds: 1), (_) => loadMetrics());
+      remoteIpadTimer = Timer.periodic(
+        Duration(seconds: 1),
+        (_) => loadRemoteIpadStatus(),
+      );
     }
   }
 
   @override
   void dispose() {
     metricsTimer?.cancel();
+    remoteIpadTimer?.cancel();
     super.dispose();
   }
 
@@ -145,18 +153,24 @@ class _DextopFeaturesPageState extends State<DextopFeaturesPage> {
     final diagnosticsFuture = needsStatus
         ? channel.invokeMapMethod<String, dynamic>('diagnostics')
         : Future<Map<String, dynamic>?>.value({});
+    final remoteIpadFuture = channel.invokeMapMethod<String, dynamic>(
+      'remoteIpadSessionStatus',
+    );
     final foldableDeviceFuture = channel.invokeMethod<bool>('isFoldableDevice');
     final results = await Future.wait<dynamic>([
       preferencesFuture,
       appsFuture,
       diagnosticsFuture,
+      remoteIpadFuture,
       foldableDeviceFuture,
     ]);
     final preferences = results[0] as SharedPreferences;
     final rawApps = (results[1] as List<dynamic>?) ?? [];
     final rawDiagnostics =
         (results[2] as Map<String, dynamic>?) ?? <String, dynamic>{};
-    final isFoldableDevice = results[3] == true;
+    final remoteIpad =
+        (results[3] as Map<String, dynamic>?) ?? <String, dynamic>{};
+    final isFoldableDevice = results[4] == true;
     final savedFoldableAuto = preferences.getBool('foldable_auto');
     // On foldables, follow the active panel by default. Keep an explicit
     // user choice (including false) intact when upgrading an existing install.
@@ -189,6 +203,7 @@ class _DextopFeaturesPageState extends State<DextopFeaturesPage> {
           .toList();
       filteredApps = apps;
       diagnostics = rawDiagnostics;
+      remoteIpadStatus = remoteIpad;
       workspaces = decoded
           .map((item) => Map<String, dynamic>.from(item as Map))
           .toList();
@@ -227,6 +242,62 @@ class _DextopFeaturesPageState extends State<DextopFeaturesPage> {
     final value =
         await channel.invokeMapMethod<String, dynamic>('metrics') ?? {};
     if (mounted) setState(() => metrics = value);
+  }
+
+  Future<void> loadRemoteIpadStatus() async {
+    final value =
+        await channel.invokeMapMethod<String, dynamic>('remoteIpadSessionStatus') ??
+        {};
+    if (!mounted) return;
+    setState(() => remoteIpadStatus = value);
+  }
+
+  Future<void> startRemoteIpadSession() async {
+    if (remoteIpadBusy) return;
+    setState(() => remoteIpadBusy = true);
+    try {
+      if (!widget.isRunning) {
+        final starter = widget.ensureDesktopRunning;
+        final started = starter != null ? await starter() : false;
+        if (!started) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Start Dextop before enabling iPad remote mode.')),
+            );
+          }
+          return;
+        }
+      }
+      final value =
+          await channel.invokeMapMethod<String, dynamic>('startRemoteIpadSession') ??
+          {};
+      if (!mounted) return;
+      setState(() => remoteIpadStatus = value);
+    } on PlatformException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message ?? 'Failed to start iPad remote mode')),
+      );
+    } finally {
+      if (mounted) setState(() => remoteIpadBusy = false);
+    }
+  }
+
+  Future<void> stopRemoteIpadSession() async {
+    if (remoteIpadBusy) return;
+    setState(() => remoteIpadBusy = true);
+    try {
+      await channel.invokeMethod('stopRemoteIpadSession');
+      if (!mounted) return;
+      setState(() => remoteIpadStatus = {'running': false});
+    } on PlatformException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message ?? 'Failed to stop iPad remote mode')),
+      );
+    } finally {
+      if (mounted) setState(() => remoteIpadBusy = false);
+    }
   }
 
   Future<void> launch(String packageName, {List<int>? bounds}) async {
@@ -996,6 +1067,103 @@ class _DextopFeaturesPageState extends State<DextopFeaturesPage> {
         ]),
       if (!widget.launcherOnly &&
           (widget.category == null || widget.category == 'status')) ...[
+        _section('Remote iPad display (MVP)', Icons.tablet_mac_rounded, [
+          ListTile(
+            leading: Icon(
+              remoteIpadStatus['running'] == true
+                  ? Icons.wifi_tethering_rounded
+                  : Icons.wifi_off_rounded,
+              color: remoteIpadStatus['running'] == true ? Colors.green : null,
+            ),
+            title: Text(
+              remoteIpadStatus['running'] == true
+                  ? 'Remote mode is running'
+                  : 'Remote mode is stopped',
+            ),
+            subtitle: Text(
+              remoteIpadStatus['clientConnected'] == true
+                  ? 'iPad receiver connected'
+                  : 'No receiver connected',
+            ),
+          ),
+          if ((remoteIpadStatus['videoUrl'] as String?)?.isNotEmpty == true)
+            ListTile(
+              leading: Icon(Icons.ondemand_video_rounded),
+              title: Text('Video URL'),
+              subtitle: SelectableText('${remoteIpadStatus['videoUrl']}'),
+              trailing: IconButton(
+                tooltip: 'Copy',
+                onPressed: () => Clipboard.setData(
+                  ClipboardData(text: '${remoteIpadStatus['videoUrl']}'),
+                ),
+                icon: Icon(Icons.copy_rounded),
+              ),
+            ),
+          if ((remoteIpadStatus['controlUrl'] as String?)?.isNotEmpty == true)
+            ListTile(
+              leading: Icon(Icons.input_rounded),
+              title: Text('Control URL'),
+              subtitle: SelectableText('${remoteIpadStatus['controlUrl']}'),
+              trailing: IconButton(
+                tooltip: 'Copy',
+                onPressed: () => Clipboard.setData(
+                  ClipboardData(text: '${remoteIpadStatus['controlUrl']}'),
+                ),
+                icon: Icon(Icons.copy_rounded),
+              ),
+            ),
+          if ((remoteIpadStatus['token'] as String?)?.isNotEmpty == true)
+            ListTile(
+              leading: Icon(Icons.key_rounded),
+              title: Text('Pairing token'),
+              subtitle: SelectableText('${remoteIpadStatus['token']}'),
+              trailing: IconButton(
+                tooltip: 'Copy',
+                onPressed: () => Clipboard.setData(
+                  ClipboardData(text: '${remoteIpadStatus['token']}'),
+                ),
+                icon: Icon(Icons.copy_rounded),
+              ),
+            ),
+          if (remoteIpadStatus['pairingPayload'] is Map)
+            ListTile(
+              leading: Icon(Icons.qr_code_2_rounded),
+              title: Text('Pairing payload'),
+              subtitle: SelectableText(
+                jsonEncode(remoteIpadStatus['pairingPayload']),
+              ),
+              trailing: IconButton(
+                tooltip: 'Copy',
+                onPressed: () => Clipboard.setData(
+                  ClipboardData(
+                    text: jsonEncode(remoteIpadStatus['pairingPayload']),
+                  ),
+                ),
+                icon: Icon(Icons.copy_rounded),
+              ),
+            ),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilledButton.icon(
+                onPressed: remoteIpadBusy ? null : startRemoteIpadSession,
+                icon: Icon(Icons.play_arrow_rounded),
+                label: Text('Start remote mode'),
+              ),
+              OutlinedButton.icon(
+                onPressed: remoteIpadBusy ? null : stopRemoteIpadSession,
+                icon: Icon(Icons.stop_rounded),
+                label: Text('Stop remote mode'),
+              ),
+              OutlinedButton.icon(
+                onPressed: remoteIpadBusy ? null : loadRemoteIpadStatus,
+                icon: Icon(Icons.refresh_rounded),
+                label: Text(currentLocalizations().uiReDiagnosis),
+              ),
+            ],
+          ),
+        ]),
         _section(currentLocalizations().uiPerformance, Icons.speed_rounded, [
           SwitchListTile(
             value: performanceHud,

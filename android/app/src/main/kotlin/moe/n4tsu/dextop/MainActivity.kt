@@ -115,6 +115,7 @@ open class MainActivity : FlutterActivity() {
     private var flutterChannel: MethodChannel? = null
     private var pendingWirelessDebuggingResult: MethodChannel.Result? = null
     private var pendingNotificationPermissionResult: MethodChannel.Result? = null
+    private var remoteIpadSession: RemoteIpadSession? = null
     private val distributionScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     // Embedded ADB restore must survive the launcher activity replacing its Flutter engine.
     private val embeddedPrivilegeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -312,6 +313,7 @@ open class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        stopRemoteIpadSession()
         if (instance === this) {
             instance = null
             phoneTaskId = -1
@@ -443,6 +445,12 @@ open class MainActivity : FlutterActivity() {
                     ))
                 }
                 "stop" -> stopDisplay(result)
+                "startRemoteIpadSession" -> startRemoteIpadSession(result)
+                "stopRemoteIpadSession" -> {
+                    stopRemoteIpadSession()
+                    result.success(null)
+                }
+                "remoteIpadSessionStatus" -> result.success(remoteIpadSessionStatus())
                 "stopAuto" -> {
                     AndroidAutoMirrorActivity.stopAutoSessionFromPhone()
                     CardexRelayService.stopFromPhone()
@@ -682,6 +690,7 @@ open class MainActivity : FlutterActivity() {
         permissionHandler.removeCallbacks(startTimeout)
         pendingPermissionResult = null
         pendingStartResult = null
+        stopRemoteIpadSession()
         distributionScope.cancel()
         super.cleanUpFlutterEngine(flutterEngine)
     }
@@ -1094,13 +1103,58 @@ open class MainActivity : FlutterActivity() {
         permissionHandler.removeCallbacks(startTimeout)
         pendingStartResult?.error("start_cancelled", "Dextop startup was cancelled", null)
         pendingStartResult = null
+        stopRemoteIpadSession()
         MirrorService.stopActive()
         restoreOrientation()
         result.success(null)
     }
 
+    private fun startRemoteIpadSession(result: MethodChannel.Result) {
+        if (!MirrorService.isActive()) {
+            result.error("remote_requires_active_session", "Start a Dextop desktop session first", null)
+            return
+        }
+        val snapshot = MirrorService.activeDisplaySnapshot()
+        if (snapshot == null) {
+            result.error("remote_display_unavailable", "Active display details are unavailable", null)
+            return
+        }
+        runCatching {
+            stopRemoteIpadSession()
+            val session = RemoteIpadSession(
+                context = this,
+                privilegedAccess = PrivilegedAccess(logTag),
+                targetDisplayId = snapshot.displayId,
+                targetWidth = snapshot.width,
+                targetHeight = snapshot.height,
+                density = snapshot.density,
+            )
+            remoteIpadSession = session
+            session.start()
+        }.onSuccess(result::success).onFailure { error ->
+            stopRemoteIpadSession()
+            result.error("remote_start_failed", error.message, null)
+        }
+    }
+
+    private fun stopRemoteIpadSession() {
+        remoteIpadSession?.stop()
+        remoteIpadSession = null
+    }
+
+    private fun remoteIpadSessionStatus(): Map<String, Any> {
+        val session = remoteIpadSession
+        if (session == null) return mapOf("running" to false)
+        if (!MirrorService.isActive()) {
+            stopRemoteIpadSession()
+            return mapOf("running" to false)
+        }
+        return session.status()
+    }
+
     private fun discardRecovery(result: MethodChannel.Result) {
         Log.i(logTag, "discardRecovery")
+        stopRemoteIpadSession()
         MirrorService.stopActive()
         runCatching {
             val journal = SessionJournal(this)
