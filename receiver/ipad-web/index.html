@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <title>Dextop iPad Receiver (MVP)</title>
+    <style>
+      :root { color-scheme: dark; }
+      body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0f1115; color: #f5f6f8; }
+      .wrap { display: grid; grid-template-rows: auto 1fr; min-height: 100dvh; }
+      .controls { padding: 12px; display: grid; gap: 8px; background: #151922; border-bottom: 1px solid #2b3242; }
+      .row { display: grid; gap: 6px; }
+      label { font-size: 12px; color: #c8d0e0; }
+      input, textarea, button { width: 100%; box-sizing: border-box; border-radius: 10px; border: 1px solid #3b465d; background: #202838; color: #fff; padding: 10px; font-size: 14px; }
+      textarea { min-height: 64px; }
+      .actions { display: grid; gap: 8px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .status { font-size: 12px; color: #8dc0ff; }
+      .viewer { position: relative; background: #000; }
+      video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+      #touchLayer { position: absolute; inset: 0; touch-action: none; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="controls">
+        <div class="row">
+          <label for="pairing">Pairing payload (from Android app)</label>
+          <textarea id="pairing" placeholder='{"v":1,"videoUrl":"http://.../live.mp4","controlUrl":"http://.../v1/input","token":"..."}'></textarea>
+        </div>
+        <div class="row"><label for="videoUrl">Video URL</label><input id="videoUrl" /></div>
+        <div class="row"><label for="controlUrl">Control URL</label><input id="controlUrl" /></div>
+        <div class="row"><label for="token">Token</label><input id="token" /></div>
+        <div class="actions">
+          <button id="applyPairing">Apply payload</button>
+          <button id="connect">Connect</button>
+          <button id="disconnect">Disconnect</button>
+        </div>
+        <div class="status" id="status">Idle</div>
+      </div>
+      <div class="viewer">
+        <video id="video" autoplay muted playsinline controls></video>
+        <div id="touchLayer" tabindex="0" aria-label="Touch surface"></div>
+      </div>
+    </div>
+    <script>
+      const video = document.getElementById('video');
+      const layer = document.getElementById('touchLayer');
+      const statusEl = document.getElementById('status');
+      const fields = {
+        pairing: document.getElementById('pairing'),
+        videoUrl: document.getElementById('videoUrl'),
+        controlUrl: document.getElementById('controlUrl'),
+        token: document.getElementById('token'),
+      };
+      let statusPoll = null;
+      const pointerDown = new Set();
+
+      const setStatus = (text) => { statusEl.textContent = text; };
+
+      const payload = () => ({
+        videoUrl: fields.videoUrl.value.trim(),
+        controlUrl: fields.controlUrl.value.trim(),
+        token: fields.token.value.trim(),
+      });
+
+      const keyModifiers = (event) => [
+        event.shiftKey ? 'shift' : null,
+        event.ctrlKey ? 'ctrl' : null,
+        event.altKey ? 'alt' : null,
+        event.metaKey ? 'meta' : null,
+      ].filter(Boolean);
+
+      const send = async (message) => {
+        const { controlUrl, token } = payload();
+        if (!controlUrl || !token) return;
+        try {
+          const response = await fetch(controlUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Dextop-Token': token,
+            },
+            body: JSON.stringify({ v: 1, ...message }),
+          });
+          if (!response.ok) setStatus(`Input rejected (${response.status})`);
+        } catch (error) {
+          setStatus(`Input transport error: ${error.message}`);
+        }
+      };
+
+      const eventPoint = (event) => {
+        const box = layer.getBoundingClientRect();
+        return {
+          x: event.clientX - box.left,
+          y: event.clientY - box.top,
+          viewportWidth: Math.max(1, Math.round(box.width)),
+          viewportHeight: Math.max(1, Math.round(box.height)),
+        };
+      };
+
+      document.getElementById('applyPairing').addEventListener('click', () => {
+        try {
+          const json = JSON.parse(fields.pairing.value);
+          fields.videoUrl.value = json.videoUrl || '';
+          fields.controlUrl.value = json.controlUrl || '';
+          fields.token.value = json.token || '';
+          setStatus('Pairing payload applied.');
+        } catch {
+          setStatus('Pairing payload is invalid JSON.');
+        }
+      });
+
+      document.getElementById('connect').addEventListener('click', async () => {
+        const { videoUrl } = payload();
+        if (!videoUrl) {
+          setStatus('Enter a video URL first.');
+          return;
+        }
+        video.src = videoUrl;
+        try { await video.play(); } catch (_) {}
+        layer.focus();
+        if (statusPoll) clearInterval(statusPoll);
+        statusPoll = setInterval(async () => {
+          const { controlUrl, token } = payload();
+          if (!controlUrl || !token) return;
+          const sessionUrl = controlUrl.replace('/v1/input', '/v1/session');
+          try {
+            const response = await fetch(sessionUrl, { headers: { 'X-Dextop-Token': token } });
+            if (response.ok) {
+              const data = await response.json();
+              setStatus(data.clientConnected ? 'Connected' : 'Streaming, waiting for input link');
+            }
+          } catch {}
+        }, 1200);
+        setStatus('Connecting...');
+      });
+
+      document.getElementById('disconnect').addEventListener('click', () => {
+        if (statusPoll) clearInterval(statusPoll);
+        statusPoll = null;
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+        pointerDown.clear();
+        setStatus('Disconnected');
+      });
+
+      layer.addEventListener('pointerdown', (event) => {
+        pointerDown.add(event.pointerId);
+        const p = eventPoint(event);
+        send({ type: 'touch', action: 'down', ...p });
+      });
+
+      layer.addEventListener('pointermove', (event) => {
+        if (!pointerDown.has(event.pointerId)) return;
+        const p = eventPoint(event);
+        send({ type: 'touch', action: 'move', ...p });
+      });
+
+      layer.addEventListener('pointerup', (event) => {
+        pointerDown.delete(event.pointerId);
+        const p = eventPoint(event);
+        send({ type: 'touch', action: 'up', ...p });
+      });
+
+      layer.addEventListener('pointercancel', (event) => {
+        pointerDown.delete(event.pointerId);
+        const p = eventPoint(event);
+        send({ type: 'touch', action: 'cancel', ...p });
+      });
+
+      layer.addEventListener('wheel', (event) => {
+        event.preventDefault();
+        const p = eventPoint(event);
+        send({
+          type: 'touch',
+          action: 'scroll',
+          ...p,
+          deltaX: Math.max(-3, Math.min(3, event.deltaX / 40)),
+          deltaY: Math.max(-3, Math.min(3, event.deltaY / 40)),
+        });
+      }, { passive: false });
+
+      window.addEventListener('keydown', (event) => {
+        if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
+        send({
+          type: 'key',
+          action: 'down',
+          keyCode: event.keyCode || 0,
+          repeatCount: event.repeat ? 1 : 0,
+          modifiers: keyModifiers(event),
+        });
+      });
+
+      window.addEventListener('keyup', (event) => {
+        if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
+        send({
+          type: 'key',
+          action: 'up',
+          keyCode: event.keyCode || 0,
+          modifiers: keyModifiers(event),
+        });
+      });
+    </script>
+  </body>
+</html>

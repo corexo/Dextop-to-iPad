@@ -198,6 +198,33 @@ Dextop provides two Android Auto entries with different platform requirements:
 
 Android Auto controls whether a sideloaded parked app appears on a particular head unit. The default compatibility mode may show the Auto virtual-display overlay on the phone; an experimental hidden-display mode is available under **Dextop → Settings → Auto**. See the [Android Auto wiki](https://github.com/NarYuki/Dextop/wiki/Android-Auto) for installation details, display modes, gestures, controls, limitations, DHU testing, and troubleshooting.
 
+## Wi‑Fi iPad remote display (MVP)
+
+This repository now includes an incremental local-network prototype for iPad remote display/input:
+
+- **Android sender (implemented)**:  
+  `startRemoteIpadSession` starts a short-lived tokenized control endpoint (`/v1/input`, protocol `v:1`) and reuses the existing low-latency compatibility stream (`live.mp4`).
+- **iPad receiver companion (implemented)**:  
+  `receiver/ipad-web/index.html` is a Safari/PWA-style receiver shell that plays the video stream and sends touch/scroll/keyboard input messages back to Android.
+- **Input routing (implemented)**:  
+  Touch and key events are translated and injected through Dextop's existing privileged input path when available; failures are returned to the receiver as structured errors.
+- **Pairing flow (implemented)**:  
+  Start remote mode in **Features → Status → Remote iPad display (MVP)**, then copy the `pairing payload` (`videoUrl`, `controlUrl`, `token`) into the iPad receiver.
+
+### Security and reliability notes
+
+- Local endpoints reject non-site-local client addresses.
+- Control traffic requires `X-Dextop-Token` and token expiry.
+- Malformed/unsupported protocol messages are handled without crashing.
+- Existing Google Cast behavior is unchanged; this MVP is a separate mode.
+
+### Current limitations
+
+- Receiver is currently a web companion shell (Safari), not a native iOS app target.
+- Video path currently reuses fragmented-MP4 compatibility streaming (not WebRTC yet).
+- Keyboard mapping relies on browser keycode compatibility.
+- Multi-touch/pointer richness is intentionally limited in this first pass.
+
 ## Development
 
 ```sh
