@@ -66,36 +66,36 @@ internal object RemoteIpadProtocol {
 
     fun parse(raw: String): Message {
         val json = JSONObject(raw)
-        val version = json.optInt("v", -1)
+        val version = if (json.has("v")) json.getInt("v") else -1
         require(version == VERSION) { "Unsupported protocol version: $version" }
-        val type = json.optString("type").lowercase()
+        val type = if (json.has("type")) json.getString("type") else "".lowercase()
         return when (type) {
             "touch", "pointer" -> TouchMessage(
                 version = version,
-                action = json.optString("action", "move").lowercase(),
-                x = json.optDouble("x", 0.0),
-                y = json.optDouble("y", 0.0),
-                viewportWidth = json.optInt("viewportWidth", 1),
-                viewportHeight = json.optInt("viewportHeight", 1),
-                deltaX = json.optDouble("deltaX", 0.0),
-                deltaY = json.optDouble("deltaY", 0.0),
+                action = if (json.has("action")) json.getString("action") else "move".lowercase(),
+                x = if (json.has("x")) json.getDouble("x") else 0.0,
+                y = if (json.has("y")) json.getDouble("y") else 0.0,
+                viewportWidth = if (json.has("viewportWidth")) json.getInt("viewportWidth") else 1,
+                viewportHeight = if (json.has("viewportHeight")) json.getInt("viewportHeight") else 1,
+                deltaX = if (json.has("deltaX")) json.getDouble("deltaX") else 0.0,
+                deltaY = if (json.has("deltaY")) json.getDouble("deltaY") else 0.0,
             )
 
             "key", "keyboard" -> {
-                val explicitMeta = if (json.has("metaState")) json.optInt("metaState", 0) else null
-                val modifierMeta = parseModifiers(json.optJSONArray("modifiers"))
+                val explicitMeta = if (json.has("metaState")) if (json.has("metaState")) json.getInt("metaState") else 0 else null
+                val modifierMeta = parseModifiers(if (json.has("modifiers")) json.getJSONArray("modifiers") else null)
                 KeyMessage(
                     version = version,
-                    action = json.optString("action", "down").lowercase(),
-                    keyCode = json.optInt("keyCode", KeyEvent.KEYCODE_UNKNOWN),
-                    repeatCount = json.optInt("repeatCount", 0).coerceAtLeast(0),
+                    action = if (json.has("action")) json.getString("action") else "down".lowercase(),
+                    keyCode = if (json.has("keyCode")) json.getInt("keyCode") else KeyEvent.KEYCODE_UNKNOWN,
+                    repeatCount = if (json.has("repeatCount")) json.getInt("repeatCount") else 0.coerceAtLeast(0),
                     metaState = explicitMeta ?: modifierMeta,
                 )
             }
 
             "session" -> SessionMessage(
                 version = version,
-                action = json.optString("action", "ping").lowercase(),
+                action = if (json.has("action")) json.getString("action") else "ping".lowercase(),
             )
 
             else -> error("Unsupported message type: $type")
@@ -106,7 +106,7 @@ internal object RemoteIpadProtocol {
         if (modifiers == null) return 0
         var metaState = 0
         for (index in 0 until modifiers.length()) {
-            when (modifiers.optString(index, "").lowercase()) {
+            when (if (!modifiers.isNull(index)) modifiers.getString(index) else "".lowercase()) {
                 "shift" -> metaState = metaState or KeyEvent.META_SHIFT_ON
                 "ctrl", "control" -> metaState = metaState or KeyEvent.META_CTRL_ON
                 "alt", "option" -> metaState = metaState or KeyEvent.META_ALT_ON
