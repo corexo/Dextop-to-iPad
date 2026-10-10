@@ -55,6 +55,16 @@
       let statusPoll = null;
       const pointerDown = new Set();
 
+const KEYCODE_MAP = {
+        'KeyA': 29, 'KeyB': 30, 'KeyC': 31, 'KeyD': 32, 'KeyE': 33, 'KeyF': 34, 'KeyG': 35, 'KeyH': 36, 'KeyI': 37, 'KeyJ': 38, 'KeyK': 39, 'KeyL': 40, 'KeyM': 41, 'KeyN': 42, 'KeyO': 43, 'KeyP': 44, 'KeyQ': 45, 'KeyR': 46, 'KeyS': 47, 'KeyT': 48, 'KeyU': 49, 'KeyV': 50, 'KeyW': 51, 'KeyX': 52, 'KeyY': 53, 'KeyZ': 54,
+        'Digit0': 7, 'Digit1': 8, 'Digit2': 9, 'Digit3': 10, 'Digit4': 11, 'Digit5': 12, 'Digit6': 13, 'Digit7': 14, 'Digit8': 15, 'Digit9': 16,
+        'Enter': 66, 'Escape': 111, 'Backspace': 67, 'Tab': 61, 'Space': 62,
+        'ShiftLeft': 59, 'ShiftRight': 60, 'ControlLeft': 113, 'ControlRight': 114, 'AltLeft': 57, 'AltRight': 58, 'MetaLeft': 117, 'MetaRight': 118,
+        'ArrowUp': 19, 'ArrowDown': 20, 'ArrowLeft': 21, 'ArrowRight': 22,
+        'PageUp': 92, 'PageDown': 93, 'Home': 122, 'End': 123,
+        'Semicolon': 74, 'Equal': 70, 'Comma': 55, 'Minus': 69, 'Period': 56, 'Slash': 76, 'Backquote': 68, 'BracketLeft': 71, 'BracketRight': 72, 'Backslash': 73, 'Quote': 75
+      };
+
       const setStatus = (text) => { statusEl.textContent = text; };
 
       const payload = () => ({
@@ -95,6 +105,9 @@
           y: event.clientY - box.top,
           viewportWidth: Math.max(1, Math.round(box.width)),
           viewportHeight: Math.max(1, Math.round(box.height)),
+          pointerId: event.pointerId || 0,
+          pointerType: event.pointerType || 'touch',
+          buttons: event.buttons || 0,
         };
       };
 
@@ -145,26 +158,32 @@
         setStatus('Disconnected');
       });
 
+      layer.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+      });
+
       layer.addEventListener('pointerdown', (event) => {
-        pointerDown.add(event.pointerId);
+        if (event.pointerType === 'touch') pointerDown.add(event.pointerId);
+        layer.setPointerCapture(event.pointerId);
         const p = eventPoint(event);
         send({ type: 'touch', action: 'down', ...p });
       });
 
       layer.addEventListener('pointermove', (event) => {
-        if (!pointerDown.has(event.pointerId)) return;
+        if (event.pointerType === 'touch' && !pointerDown.has(event.pointerId)) return;
         const p = eventPoint(event);
         send({ type: 'touch', action: 'move', ...p });
       });
 
       layer.addEventListener('pointerup', (event) => {
-        pointerDown.delete(event.pointerId);
+        if (event.pointerType === 'touch') pointerDown.delete(event.pointerId);
+        layer.releasePointerCapture(event.pointerId);
         const p = eventPoint(event);
         send({ type: 'touch', action: 'up', ...p });
       });
 
       layer.addEventListener('pointercancel', (event) => {
-        pointerDown.delete(event.pointerId);
+        if (event.pointerType === 'touch') pointerDown.delete(event.pointerId);
         const p = eventPoint(event);
         send({ type: 'touch', action: 'cancel', ...p });
       });
@@ -183,10 +202,11 @@
 
       window.addEventListener('keydown', (event) => {
         if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
+        if (KEYCODE_MAP[event.code]) event.preventDefault();
         send({
           type: 'key',
           action: 'down',
-          keyCode: event.keyCode || 0,
+          keyCode: KEYCODE_MAP[event.code] || 0,
           repeatCount: event.repeat ? 1 : 0,
           modifiers: keyModifiers(event),
         });
@@ -194,10 +214,11 @@
 
       window.addEventListener('keyup', (event) => {
         if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
+        if (KEYCODE_MAP[event.code]) event.preventDefault();
         send({
           type: 'key',
           action: 'up',
-          keyCode: event.keyCode || 0,
+          keyCode: KEYCODE_MAP[event.code] || 0,
           modifiers: keyModifiers(event),
         });
       });
